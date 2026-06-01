@@ -349,6 +349,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <button class="tbtn" onclick="quickPhrase('Ret mine fejl')">✏️ Исправь ошибки</button>
       <button class="tbtn" onclick="quickPhrase('Giv mig en ny sætning at øve')">🎯 Новое предложение</button>
       <button class="tbtn" onclick="quickPhrase('Forklar grammatikreglen')">📖 Объясни правило</button>
+      <button class="tbtn" onclick="stopTTS()" title="Остановить озвучку">⏹ Стоп</button>
     </div>
     <div class="input-row">
       <div class="mic-wrap">
@@ -570,7 +571,7 @@ async function sendAudioToWhisper() {
   fd.append('file', blob, `audio.${ext}`);
   fd.append('model', 'whisper-1');
   fd.append('language', 'da');
-  fd.append('prompt', 'Dansk tale fra en studerende der lærer dansk som andetsprog.');
+  fd.append('prompt', 'Dansk tale fra en studerende på DU2 Modul 3. Emner: hverdagsliv, arbejde, sundhed, transport, samfund. Ord: arbejdsplads, læge, sygehus, busstop, kommune, uddannelse, familie, indkøb, lejlighed, kollega, jobsamtale, forsikring, sygdom, medicin, togstation.');
 
   try {
     const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
@@ -698,10 +699,10 @@ function processResponse(raw) {
 }
 
 // ══════════════════════════════════════
-// TTS
+// TTS — OpenAI tts-1
 // ══════════════════════════════════════
 
-// Extract all Danish text from <span class="da">...</span> in an HTML string
+// Extract all Danish text from <span class="da">...</span>
 function extractDanishSpans(html) {
   const tmp = document.createElement('div');
   tmp.innerHTML = html;
@@ -709,24 +710,52 @@ function extractDanishSpans(html) {
   return Array.from(spans).map(s => s.textContent.trim()).filter(Boolean);
 }
 
-// Speak a list of Danish phrases sequentially
-function speakDanishPhrases(phrases) {
-  if (!window.speechSynthesis || !phrases.length) return;
-  speechSynthesis.cancel();
-  let idx = 0;
-  function next() {
-    if (idx >= phrases.length) return;
-    const u = new SpeechSynthesisUtterance(phrases[idx++]);
-    u.lang = 'da-DK';
-    u.rate = 0.82;
-    u.pitch = 1;
-    u.onend = next;
-    speechSynthesis.speak(u);
-  }
-  next();
+let ttsQueue = [];
+let ttsPlaying = false;
+
+async function speakDanishPhrases(phrases) {
+  if (!phrases.length || !S.key) return;
+  // Stop current playback
+  ttsQueue = [...phrases];
+  ttsPlaying = true;
+  playNextTTS();
 }
 
-// Legacy alias — speaks only Danish spans found in plain HTML
+async function playNextTTS() {
+  if (!ttsPlaying || !ttsQueue.length) { ttsPlaying = false; return; }
+  const text = ttsQueue.shift();
+  try {
+    const res = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${S.key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'tts-1',
+        input: text,
+        voice: 'nova',
+        speed: 0.9,
+      })
+    });
+    if (!res.ok) { playNextTTS(); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.onended = () => { URL.revokeObjectURL(url); playNextTTS(); };
+    audio.onerror = () => { URL.revokeObjectURL(url); playNextTTS(); };
+    await audio.play();
+  } catch(e) {
+    playNextTTS();
+  }
+}
+
+function stopTTS() {
+  ttsPlaying = false;
+  ttsQueue = [];
+}
+
+// Called after GPT response — speak all Danish spans
 function speakDA(html) {
   const phrases = extractDanishSpans(html);
   if (phrases.length) speakDanishPhrases(phrases);
@@ -747,7 +776,7 @@ function addMsg(role, html, withSpeakBtn) {
     const phrases = extractDanishSpans(html);
     if (phrases.length) {
       const phrasesJson = JSON.stringify(phrases).replace(/'/g, '&#39;');
-      speakBtnHtml = `<button class="speak-btn" title="Озвучить датские фразы" onclick='speakDanishPhrases(${phrasesJson})'>🔊</button>`;
+      speakBtnHtml = `<button class="speak-btn" title="Озвучить датские фразы (OpenAI TTS)" onclick='speakDanishPhrases(${phrasesJson})'>🔊 Послушать</button>`;
     }
   }
 
