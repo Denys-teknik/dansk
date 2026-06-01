@@ -168,6 +168,16 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   background:rgba(63,185,80,0.08);border-left:3px solid var(--green);
   padding:8px 11px;border-radius:0 7px 7px 0;margin-top:7px;font-size:.82rem;
 }
+.speak-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  margin-top:8px;background:rgba(255,255,255,0.06);
+  border:1px solid var(--border);border-radius:7px;
+  padding:4px 10px;font-size:.78rem;cursor:pointer;
+  color:var(--muted);font-family:'DM Sans',sans-serif;
+  transition:all .2s;gap:4px;
+}
+.speak-btn:hover{color:var(--gold);border-color:var(--gold);background:rgba(210,153,34,0.08)}
+.speak-btn:active{transform:scale(.94)}
 
 /* SPEAKING INDICATOR */
 .speaking-ring{
@@ -432,7 +442,7 @@ Jeg ved at du er på <b>DU2 Modul 3</b> og har <b>4 måneder til eksamen</b>. Vi
 <span class="tip">Vælg et emne ovenfor og lad os begynde!</span><br>
 <span style="color:var(--muted);font-size:.8rem">Или просто напишите/скажите что-нибудь по-датски 🇩🇰</span>`;
 
-  addMsg('t', greetMsg);
+  addMsg('t', greetMsg, true);
 }
 
 // ══════════════════════════════════════
@@ -454,7 +464,7 @@ function setTopic(idx, el) {
     buildExamCard(),
   ];
 
-  addMsg('t', intros[idx] || intros[0]);
+  addMsg('t', intros[idx] || intros[0], true);
 }
 
 function buildExamCard() {
@@ -487,7 +497,7 @@ function startExamTask(type) {
 <b>Первое слово:</b> <span class="hl">работа</span><br><br>
 <span class="tip">Напишите по-датски!</span>`,
   };
-  addMsg('t', tasks[type]);
+  addMsg('t', tasks[type], true);
 }
 
 // ══════════════════════════════════════
@@ -680,37 +690,68 @@ function processResponse(raw) {
   }
 
   const clean = raw.replace(/<!--P:.*?-->/s,'').trim();
-  addMsg('t', clean);
+  addMsg('t', clean, true);
   S.history.push({role:'assistant', content:clean});
 
-  // TTS for teacher response (extract plain text)
-  const plainText = clean.replace(/<[^>]+>/g,'').substring(0,200);
-  speakDA(plainText);
+  // Auto-speak only the Danish spans
+  speakDA(clean);
 }
 
 // ══════════════════════════════════════
 // TTS
 // ══════════════════════════════════════
-function speakDA(text) {
-  if (!window.speechSynthesis) return;
-  // Only speak Danish parts (simple heuristic: speak if has Danish chars or common words)
+
+// Extract all Danish text from <span class="da">...</span> in an HTML string
+function extractDanishSpans(html) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const spans = tmp.querySelectorAll('span.da');
+  return Array.from(spans).map(s => s.textContent.trim()).filter(Boolean);
+}
+
+// Speak a list of Danish phrases sequentially
+function speakDanishPhrases(phrases) {
+  if (!window.speechSynthesis || !phrases.length) return;
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = 'da-DK';
-  u.rate = 0.85;
-  u.pitch = 1;
-  speechSynthesis.speak(u);
+  let idx = 0;
+  function next() {
+    if (idx >= phrases.length) return;
+    const u = new SpeechSynthesisUtterance(phrases[idx++]);
+    u.lang = 'da-DK';
+    u.rate = 0.82;
+    u.pitch = 1;
+    u.onend = next;
+    speechSynthesis.speak(u);
+  }
+  next();
+}
+
+// Legacy alias — speaks only Danish spans found in plain HTML
+function speakDA(html) {
+  const phrases = extractDanishSpans(html);
+  if (phrases.length) speakDanishPhrases(phrases);
 }
 
 // ══════════════════════════════════════
 // UI
 // ══════════════════════════════════════
-function addMsg(role, html) {
+function addMsg(role, html, withSpeakBtn) {
   const msgs = document.getElementById('msgs');
   const d = document.createElement('div');
   d.className = `msg ${role}`;
   const avText = role === 't' ? 'L' : (S.name ? S.name[0].toUpperCase() : '👤');
-  d.innerHTML = `<div class="av ${role==='t'?'t':'u'}">${avText}</div><div class="bub">${html}</div>`;
+
+  // Build speak button for teacher messages that contain Danish spans
+  let speakBtnHtml = '';
+  if (role === 't' && withSpeakBtn) {
+    const phrases = extractDanishSpans(html);
+    if (phrases.length) {
+      const phrasesJson = JSON.stringify(phrases).replace(/'/g, '&#39;');
+      speakBtnHtml = `<button class="speak-btn" title="Озвучить датские фразы" onclick='speakDanishPhrases(${phrasesJson})'>🔊</button>`;
+    }
+  }
+
+  d.innerHTML = `<div class="av ${role==='t'?'t':'u'}">${avText}</div><div class="bub">${html}${speakBtnHtml}</div>`;
   msgs.appendChild(d);
   msgs.scrollTop = msgs.scrollHeight;
 }
